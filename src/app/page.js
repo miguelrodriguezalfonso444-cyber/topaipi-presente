@@ -12,8 +12,7 @@ import {
   UserPlus, 
   CheckCircle, 
   XCircle, 
-  AlertCircle,
-  Clock,
+  AlertCircle, 
   Save,
   Calendar,
   FileSpreadsheet,
@@ -25,10 +24,7 @@ import {
   User,
   Trash2,
   Edit3,
-  X,
-  ArrowRightCircle,
-  CheckSquare,
-  Square
+  X
 } from 'lucide-react';
 
 export default function Home() {
@@ -81,13 +77,6 @@ export default function Home() {
   const [editandoDocente, setEditandoDocente] = useState(null);
   const [editandoAsignatura, setEditandoAsignatura] = useState(null);
 
-  // Estados para Promoción de Año Escolar
-  const [promoCursoOrigen, setPromoCursoOrigen] = useState('');
-  const [promoCursoDestino, setPromoCursoDestino] = useState('');
-  const [promoEstudiantes, setPromoEstudiantes] = useState([]);
-  const [promoSeleccionados, setPromoSeleccionados] = useState([]);
-  const [loadingPromo, setLoadingPromo] = useState(false);
-
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -122,7 +111,6 @@ export default function Home() {
       setCursos(cData);
       if (cData.length > 0 && !selectedCurso) setSelectedCurso(cData[0].id);
       if (cData.length > 0 && !reporteCurso) setReporteCurso(cData[0].id);
-      if (cData.length > 0 && !promoCursoOrigen) setPromoCursoOrigen(cData[0].id);
     }
 
     const { data: dData } = await supabase.from('docentes').select('*').order('apellidos');
@@ -155,29 +143,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (session && selectedCurso && view === 'docente') {
+    if (session && selectedCurso) {
       cargarEstudiantesYAsistencia(selectedCurso, selectedAsignatura, fecha);
     }
-  }, [selectedCurso, selectedAsignatura, fecha, session, view]);
-
-  // Cargar estudiantes para promoción cuando cambie el curso origen
-  useEffect(() => {
-    if (promoCursoOrigen && adminTab === 'promocion') {
-      cargarEstudiantesPromocion(promoCursoOrigen);
-    }
-  }, [promoCursoOrigen, adminTab]);
-
-  const cargarEstudiantesPromocion = async (cursoId) => {
-    const { data } = await supabase
-      .from('estudiantes')
-      .select('*')
-      .eq('curso_id', cursoId)
-      .order('apellidos');
-    
-    setPromoEstudiantes(data || []);
-    // Por defecto seleccionar todos para promoción
-    setPromoSeleccionados((data || []).map(e => e.id));
-  };
+  }, [selectedCurso, selectedAsignatura, fecha, session]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -321,44 +290,7 @@ export default function Home() {
     XLSX.writeFile(wb, `Reporte_IED_Topaipi_${reporteFechaInicio}_al_${reporteFechaFin}.xlsx`);
   };
 
-  // --- MÓDULOS DE ADMINISTRACIÓN ---
-
-  const ejecutarPromocionAutomatica = async () => {
-    if (!promoCursoOrigen || !promoCursoDestino) {
-      setMessage({ text: 'Debes seleccionar el curso de origen y el curso de destino.', type: 'error' });
-      return;
-    }
-    if (promoSeleccionados.length === 0) {
-      setMessage({ text: 'Debes seleccionar al menos un estudiante para promover.', type: 'error' });
-      return;
-    }
-
-    if (!confirm(`¿Estás seguro de trasladar a ${promoSeleccionados.length} estudiantes al nuevo curso?`)) return;
-
-    setLoadingPromo(true);
-    const { error } = await supabase
-      .from('estudiantes')
-      .update({ curso_id: promoCursoDestino })
-      .in('id', promoSeleccionados);
-
-    setLoadingPromo(false);
-
-    if (error) {
-      setMessage({ text: 'Error en la promoción: ' + error.message, type: 'error' });
-    } else {
-      setMessage({ text: `¡Se han promovido ${promoSeleccionados.length} estudiantes exitosamente!`, type: 'success' });
-      cargarEstudiantesPromocion(promoCursoOrigen);
-      cargarDatosBasicos(session.user, perfil); // Refrescar globales
-    }
-  };
-
-  const toggleSeleccionPromo = (id) => {
-    if (promoSeleccionados.includes(id)) {
-      setPromoSeleccionados(promoSeleccionados.filter(item => item !== id));
-    } else {
-      setPromoSeleccionados([...promoSeleccionados, id]);
-    }
-  };
+  // --- MÓDULOS DE ADMINISTRACIÓN (CREAR / EDITAR / ELIMINAR) ---
 
   const crearCurso = async (e) => {
     e.preventDefault();
@@ -431,6 +363,7 @@ export default function Home() {
     }
   };
 
+  // REGISTRO DE USUARIOS (DOCENTE O ADMINISTRADOR)
   const registrarUsuarioAcceso = async (e) => {
     e.preventDefault();
     const userClean = nuevoUsuario.usuario.trim().toLowerCase();
@@ -448,6 +381,7 @@ export default function Home() {
         return;
       }
 
+      // 1. Guardar en tabla docentes
       const { data: docData, error: docErr } = await supabase.from('docentes').insert([{
         documento: nuevoUsuario.documento.trim(),
         nombres: nuevoUsuario.nombres.trim(),
@@ -460,6 +394,7 @@ export default function Home() {
         return;
       }
 
+      // 2. Crear cuenta Auth
       const { data: authData, error: authErr } = await supabase.auth.signUp({
         email: emailTecnico,
         password: nuevoUsuario.password
@@ -478,9 +413,11 @@ export default function Home() {
           rol: 'docente',
           docente_id: docData.id
         }]);
+
         setMessage({ text: `¡Docente '${userClean}' registrado con éxito!`, type: 'success' });
       }
     } else {
+      // REGISTRO DE ADMINISTRADOR
       const { data: authData, error: authErr } = await supabase.auth.signUp({
         email: emailTecnico,
         password: nuevoUsuario.password
@@ -498,12 +435,43 @@ export default function Home() {
           usuario: userClean,
           rol: 'admin'
         }]);
+
         setMessage({ text: `¡Administrador '${userClean}' registrado con acceso total!`, type: 'success' });
       }
     }
 
     setNuevoUsuario({ documento: '', nombres: '', apellidos: '', usuario: '', password: '', rol: 'docente' });
     cargarDatosBasicos(session.user, perfil);
+  };
+
+  const guardarEdicionDocente = async (e) => {
+    e.preventDefault();
+    if (!editandoDocente) return;
+
+    const { error } = await supabase.from('docentes').update({
+      documento: editandoDocente.documento,
+      nombres: editandoDocente.nombres,
+      apellidos: editandoDocente.apellidos
+    }).eq('id', editandoDocente.id);
+
+    if (!error) {
+      setMessage({ text: '¡Información del docente actualizada!', type: 'success' });
+      setEditandoDocente(null);
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al actualizar docente: ' + error.message, type: 'error' });
+    }
+  };
+
+  const eliminarDocente = async (id, nombre) => {
+    if (!confirm(`¿Estás seguro de eliminar al docente ${nombre}?`)) return;
+    const { error } = await supabase.from('docentes').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Docente eliminado correctamente.', type: 'success' });
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al eliminar docente: ' + error.message, type: 'error' });
+    }
   };
 
   const eliminarPerfilUsuario = async (id, usuario) => {
@@ -514,6 +482,47 @@ export default function Home() {
       cargarDatosBasicos(session.user, perfil);
     } else {
       setMessage({ text: 'Error al eliminar el usuario: ' + error.message, type: 'error' });
+    }
+  };
+
+  const crearAsignatura = async (e) => {
+    if (e) e.preventDefault();
+    if (!nuevaAsignatura.trim()) return;
+
+    const { data, error } = await supabase.from('asignaturas').insert([{ nombre: nuevaAsignatura.trim() }]).select().single();
+    if (!error) {
+      setMessage({ text: '¡Asignatura creada con éxito!', type: 'success' });
+      setNuevaAsignatura('');
+      cargarDatosBasicos(session.user, perfil);
+      if (data?.id) setNuevaCarga(prev => ({ ...prev, asignatura_id: data.id }));
+    }
+  };
+
+  const guardarEdicionAsignatura = async (e) => {
+    e.preventDefault();
+    if (!editandoAsignatura) return;
+
+    const { error } = await supabase.from('asignaturas').update({
+      nombre: editandoAsignatura.nombre
+    }).eq('id', editandoAsignatura.id);
+
+    if (!error) {
+      setMessage({ text: '¡Asignatura actualizada!', type: 'success' });
+      setEditandoAsignatura(null);
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al actualizar asignatura: ' + error.message, type: 'error' });
+    }
+  };
+
+  const eliminarAsignatura = async (id, nombre) => {
+    if (!confirm(`¿Eliminar la asignatura '${nombre}'?`)) return;
+    const { error } = await supabase.from('asignaturas').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Asignatura eliminada.', type: 'success' });
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al eliminar asignatura: ' + error.message, type: 'error' });
     }
   };
 
@@ -671,6 +680,7 @@ export default function Home() {
     );
   }
 
+  // Cursos y asignaturas filtrados por la carga del docente
   const cursosDisponibles = perfil?.rol === 'docente' 
     ? Array.from(new Set(docenteCarga.map(c => c.curso_id)))
         .map(id => cursos.find(c => c.id === id))
@@ -683,6 +693,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+      {/* Encabezado Institucional */}
       <header className="bg-emerald-800 text-white shadow-md">
         <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
@@ -741,6 +752,7 @@ export default function Home() {
         </div>
       </header>
 
+      {/* Banner de Mensajes */}
       {message.text && (
         <div className="max-w-6xl mx-auto px-4 mt-4">
           <div className={`p-4 rounded-lg flex items-center gap-3 ${
@@ -817,8 +829,8 @@ export default function Home() {
                           <p className="text-xs text-slate-400">Doc: {est.documento}</p>
                         </div>
 
-                        <div className="flex flex-col xl:flex-row items-start xl:items-center gap-3 w-full xl:w-auto">
-                          <div className="flex flex-wrap rounded-lg border border-slate-200 overflow-hidden p-1 bg-slate-100/70">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                          <div className="flex rounded-lg border border-slate-200 overflow-hidden p-1 bg-slate-100/70">
                             <button
                               type="button"
                               onClick={() => handleEstadoChange(est.id, 'Presente')}
@@ -827,16 +839,6 @@ export default function Home() {
                               }`}
                             >
                               <CheckCircle className="w-3.5 h-3.5" /> Presente
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleEstadoChange(est.id, 'Llegada Tarde')}
-                              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition ${
-                                estadoActual === 'Llegada Tarde' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600'
-                              }`}
-                            >
-                              <Clock className="w-3.5 h-3.5" /> Tarde
                             </button>
 
                             <button
@@ -860,14 +862,14 @@ export default function Home() {
                             </button>
                           </div>
 
-                          {(estadoActual === 'Ausente' || estadoActual === 'Evasión' || estadoActual === 'Llegada Tarde') && (
-                            <div className="w-full xl:w-64">
+                          {(estadoActual === 'Ausente' || estadoActual === 'Evasión') && (
+                            <div className="w-full sm:w-64">
                               <input
                                 type="text"
                                 placeholder="Motivo / Observación..."
                                 value={obsActual}
                                 onChange={(e) => handleObservacionChange(est.id, e.target.value)}
-                                className="w-full px-2.5 py-1.5 text-xs border border-amber-300 rounded-md bg-amber-50/50 text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                className="w-full px-2.5 py-1.5 text-xs border border-amber-300 rounded-md bg-amber-50/50 text-slate-800"
                               />
                             </div>
                           )}
@@ -996,7 +998,6 @@ export default function Home() {
                           <td className="p-3">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               r.estado === 'Presente' ? 'bg-green-100 text-green-800' :
-                              r.estado === 'Llegada Tarde' ? 'bg-blue-100 text-blue-800' :
                               r.estado === 'Ausente' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
                             }`}>
                               {r.estado}
@@ -1016,7 +1017,7 @@ export default function Home() {
         {/* VISTA ADMINISTRADOR */}
         {view === 'admin' && perfil?.rol === 'admin' && (
           <div className="space-y-6">
-            <div className="flex border-b border-slate-200 bg-white rounded-t-xl px-4 pt-2 gap-4 overflow-x-auto whitespace-nowrap">
+            <div className="flex border-b border-slate-200 bg-white rounded-t-xl px-4 pt-2 gap-4">
               <button
                 onClick={() => setAdminTab('estudiantes')}
                 className={`flex items-center gap-2 pb-3 px-2 font-medium text-xs border-b-2 transition ${
@@ -1024,14 +1025,6 @@ export default function Home() {
                 }`}
               >
                 <Users className="w-4 h-4" /> Cursos y Estudiantes
-              </button>
-              <button
-                onClick={() => setAdminTab('promocion')}
-                className={`flex items-center gap-2 pb-3 px-2 font-medium text-xs border-b-2 transition ${
-                  adminTab === 'promocion' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-slate-500'
-                }`}
-              >
-                <ArrowRightCircle className="w-4 h-4" /> Transición de Año
               </button>
               <button
                 onClick={() => setAdminTab('docentes')}
@@ -1253,121 +1246,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* TAB: TRANSICIÓN DE AÑO ESCOLAR (PROMOCIÓN) */}
-            {adminTab === 'promocion' && (
-              <div className="space-y-6">
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-                  <div className="border-b border-slate-100 pb-4">
-                    <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                      <ArrowRightCircle className="w-5 h-5 text-emerald-700" /> Transición Automática de Año Escolar
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Mueve masivamente a los estudiantes aprobados hacia su nuevo curso. 
-                      Los estudiantes que desmarques conservarán su curso original (o podrás reasignarlos manualmente después).
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <div>
-                      <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
-                        1. Curso de Origen (Año actual)
-                      </label>
-                      <select
-                        value={promoCursoOrigen}
-                        onChange={(e) => setPromoCursoOrigen(e.target.value)}
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-emerald-500"
-                      >
-                        {cursos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold uppercase text-emerald-700 block mb-1">
-                        2. Curso de Destino (Año siguiente)
-                      </label>
-                      <select
-                        value={promoCursoDestino}
-                        onChange={(e) => setPromoCursoDestino(e.target.value)}
-                        className="w-full p-2.5 bg-emerald-50 border border-emerald-300 rounded-lg text-sm text-emerald-900 focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="">-- Seleccionar Nuevo Curso --</option>
-                        {cursos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg overflow-hidden border-slate-200">
-                    <div className="bg-slate-100 p-3 flex justify-between items-center border-b border-slate-200">
-                      <h3 className="font-semibold text-slate-700 text-sm">
-                        Estudiantes a Promover ({promoSeleccionados.length} de {promoEstudiantes.length})
-                      </h3>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (promoSeleccionados.length === promoEstudiantes.length) {
-                            setPromoSeleccionados([]);
-                          } else {
-                            setPromoSeleccionados(promoEstudiantes.map(e => e.id));
-                          }
-                        }}
-                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
-                      >
-                        {promoSeleccionados.length === promoEstudiantes.length ? 'Desmarcar Todos' : 'Marcar Todos'}
-                      </button>
-                    </div>
-
-                    <div className="divide-y max-h-96 overflow-y-auto bg-white">
-                      {promoEstudiantes.length === 0 ? (
-                        <div className="p-6 text-center text-slate-500 text-sm">No hay estudiantes en este curso.</div>
-                      ) : (
-                        promoEstudiantes.map(est => {
-                          const isSelected = promoSeleccionados.includes(est.id);
-                          return (
-                            <div 
-                              key={est.id} 
-                              onClick={() => toggleSeleccionPromo(est.id)}
-                              className={`p-3 flex items-center gap-3 cursor-pointer transition ${
-                                isSelected ? 'bg-emerald-50/50 hover:bg-emerald-50' : 'hover:bg-slate-50'
-                              }`}
-                            >
-                              <div className={isSelected ? "text-emerald-600" : "text-slate-300"}>
-                                {isSelected ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
-                              </div>
-                              <div>
-                                <p className={`font-semibold text-sm capitalize ${isSelected ? 'text-emerald-900' : 'text-slate-600'}`}>
-                                  {est.apellidos} {est.nombres}
-                                </p>
-                                <p className="text-xs text-slate-400">Doc: {est.documento}</p>
-                              </div>
-                              <div className="ml-auto">
-                                <span className={`px-2 py-1 rounded-md text-[10px] font-bold ${
-                                  isSelected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                                }`}>
-                                  {isSelected ? 'PROMOVER A NUEVO CURSO' : 'MANTENER EN CURSO ACTUAL'}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end pt-2">
-                    <button
-                      onClick={ejecutarPromocionAutomatica}
-                      disabled={loadingPromo || promoSeleccionados.length === 0 || !promoCursoDestino}
-                      className="px-6 py-3 bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-400 text-white font-bold text-sm rounded-lg shadow-md transition flex items-center gap-2"
-                    >
-                      <ArrowRightCircle className="w-4 h-4" />
-                      {loadingPromo ? 'Procesando Traslado...' : `Ejecutar Promoción de ${promoSeleccionados.length} estudiantes`}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB: USUARIOS Y ACCESOS */}
+            {/* TAB: USUARIOS Y ACCESOS (DOCENTES Y ADMINISTRADORES) */}
             {adminTab === 'docentes' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
@@ -1437,7 +1316,7 @@ export default function Home() {
                   </form>
                 </div>
 
-                {/* Lista de Usuarios */}
+                {/* Lista de Usuarios (Admins y Docentes) */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
                   <h2 className="text-md font-bold text-slate-800">Cuentas Registradas ({todosPerfiles.length})</h2>
 
@@ -1523,7 +1402,7 @@ export default function Home() {
                     </button>
                   </form>
 
-                  {/* Gestión Asignaturas */}
+                  {/* Crear / Editar / Eliminar Asignaturas */}
                   <div className="pt-4 border-t space-y-3">
                     <p className="text-xs font-semibold text-slate-600">Gestión de Asignaturas:</p>
 
@@ -1577,6 +1456,7 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Lista de Cargas Asignadas */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
                   <h2 className="text-md font-bold text-slate-800">Cargas Académicas Asignadas ({cargas.length})</h2>
                   <div className="divide-y max-h-80 overflow-y-auto">
