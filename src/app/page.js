@@ -1438,40 +1438,51 @@ export default function Home() {
                 </div>
 
                 {/* Lista de Usuarios */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
-                  <h2 className="text-md font-bold text-slate-800">Cuentas Registradas ({todosPerfiles.length})</h2>
+               <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
+  <h2 className="text-md font-bold text-slate-800">Cuentas Registradas ({todosPerfiles.length})</h2>
 
-                  <div className="divide-y max-h-80 overflow-y-auto">
-                    {todosPerfiles.map(p => (
-                      <div key={p.id} className="py-2.5 text-xs flex justify-between items-center hover:bg-slate-50">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-800">{p.usuario}</span>
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              p.rol === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-                            }`}>
-                              {p.rol === 'admin' ? 'ADMINISTRADOR' : 'DOCENTE'}
-                            </span>
-                          </div>
-                          {p.docentes && (
-                            <p className="text-slate-500 mt-0.5">{p.docentes.apellidos} {p.docentes.nombres}</p>
-                          )}
-                        </div>
+  <div className="divide-y max-h-80 overflow-y-auto">
+    {todosPerfiles.map(p => (
+      <div key={p.id} className="py-2.5 text-xs flex justify-between items-center hover:bg-slate-50">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-800">{p.usuario}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+              p.rol === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+            }`}>
+              {p.rol === 'admin' ? 'ADMINISTRADOR' : 'DOCENTE'}
+            </span>
+          </div>
+          {p.docentes && (
+            <p className="text-slate-500 mt-0.5">{p.docentes.apellidos} {p.docentes.nombres}</p>
+          )}
+        </div>
 
-                        <button
-                          onClick={() => eliminarPerfilUsuario(p.id, p.usuario)}
-                          className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
-                          title="Eliminar acceso"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
+        {/* --- INICIO DE BOTONES EDITAR Y ELIMINAR --- */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => alert("¡Botón de editar instalado! En el siguiente paso crearemos la ventana.")}
+            className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded"
+            title="Editar acceso"
+          >
+            {/* Icono de Lápiz */}
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+          </button>
 
+          <button
+            onClick={() => eliminarPerfilUsuario(p.id, p.usuario)}
+            className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+            title="Eliminar acceso"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        {/* --- FIN DE BOTONES --- */}
+
+      </div>
+    ))}
+  </div>
+</div>
             {/* TAB: CARGA ACADÉMICA Y ASIGNATURAS */}
             {adminTab === 'carga' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
