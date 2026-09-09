@@ -22,7 +22,10 @@ import {
   GraduationCap,
   LogOut,
   Lock,
-  User
+  User,
+  Trash2,
+  Edit3,
+  X
 } from 'lucide-react';
 
 export default function Home() {
@@ -62,12 +65,17 @@ export default function Home() {
   const [datosReporte, setDatosReporte] = useState([]);
   const [loadingReporte, setLoadingReporte] = useState(false);
 
-  // Formulario Administrador
+  // Formulario Administrador (Creación)
   const [nuevoCurso, setNuevoCurso] = useState('');
   const [nuevoEstudiante, setNuevoEstudiante] = useState({ documento: '', nombres: '', apellidos: '', curso_id: '' });
   const [nuevoDocente, setNuevoDocente] = useState({ documento: '', nombres: '', apellidos: '', usuario: '', password: '' });
   const [nuevaAsignatura, setNuevaAsignatura] = useState('');
   const [nuevaCarga, setNuevaCarga] = useState({ docente_id: '', curso_id: '', asignatura_id: '' });
+
+  // Estados para Edición
+  const [editandoEstudiante, setEditandoEstudiante] = useState(null); // { id, documento, nombres, apellidos, curso_id }
+  const [editandoDocente, setEditandoDocente] = useState(null);       // { id, documento, nombres, apellidos }
+  const [editandoAsignatura, setEditandoAsignatura] = useState(null); // { id, nombre }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -132,10 +140,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (session && selectedCurso && view === 'docente') {
+    if (session && selectedCurso) {
       cargarEstudiantesYAsistencia(selectedCurso, selectedAsignatura, fecha);
     }
-  }, [selectedCurso, selectedAsignatura, fecha, view, session]);
+  }, [selectedCurso, selectedAsignatura, fecha, session]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -279,6 +287,8 @@ export default function Home() {
     XLSX.writeFile(wb, `Reporte_Asistencia_${reporteFechaInicio}_al_${reporteFechaFin}.xlsx`);
   };
 
+  // --- MÓDULOS DE ADMINISTRACIÓN (CREAR / EDITAR / ELIMINAR) ---
+
   const crearCurso = async (e) => {
     e.preventDefault();
     if (!nuevoCurso.trim()) return;
@@ -287,6 +297,17 @@ export default function Home() {
       setMessage({ text: '¡Curso creado correctamente!', type: 'success' });
       setNuevoCurso('');
       cargarDatosBasicos(session.user, perfil);
+    }
+  };
+
+  const eliminarCurso = async (id, nombre) => {
+    if (!confirm(`¿Estás seguro de eliminar el curso '${nombre}' y todos sus estudiantes vinculados?`)) return;
+    const { error } = await supabase.from('cursos').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Curso eliminado correctamente.', type: 'success' });
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al eliminar curso: ' + error.message, type: 'error' });
     }
   };
 
@@ -304,7 +325,177 @@ export default function Home() {
     if (!error) {
       setMessage({ text: '¡Estudiante registrado con éxito!', type: 'success' });
       setNuevoEstudiante({ documento: '', nombres: '', apellidos: '', curso_id: nuevoEstudiante.curso_id });
-      if (selectedCurso === nuevoEstudiante.curso_id) cargarEstudiantesYAsistencia(selectedCurso, selectedAsignatura, fecha);
+      cargarEstudiantesYAsistencia(selectedCurso, selectedAsignatura, fecha);
+    }
+  };
+
+  const guardarEdicionEstudiante = async (e) => {
+    e.preventDefault();
+    if (!editandoEstudiante) return;
+
+    const { error } = await supabase.from('estudiantes').update({
+      documento: editandoEstudiante.documento,
+      nombres: editandoEstudiante.nombres,
+      apellidos: editandoEstudiante.apellidos,
+      curso_id: editandoEstudiante.curso_id
+    }).eq('id', editandoEstudiante.id);
+
+    if (!error) {
+      setMessage({ text: '¡Datos del estudiante actualizados!', type: 'success' });
+      setEditandoEstudiante(null);
+      cargarEstudiantesYAsistencia(selectedCurso, selectedAsignatura, fecha);
+    } else {
+      setMessage({ text: 'Error al actualizar estudiante: ' + error.message, type: 'error' });
+    }
+  };
+
+  const eliminarEstudiante = async (id, nombre) => {
+    if (!confirm(`¿Eliminar al estudiante ${nombre}?`)) return;
+    const { error } = await supabase.from('estudiantes').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Estudiante eliminado con éxito.', type: 'success' });
+      cargarEstudiantesYAsistencia(selectedCurso, selectedAsignatura, fecha);
+    } else {
+      setMessage({ text: 'Error al eliminar: ' + error.message, type: 'error' });
+    }
+  };
+
+  const registrarDocente = async (e) => {
+    e.preventDefault();
+    const userClean = nuevoDocente.usuario.trim().toLowerCase();
+    
+    if (!nuevoDocente.documento || !nuevoDocente.nombres || !nuevoDocente.apellidos || !userClean || !nuevoDocente.password) {
+      setMessage({ text: 'Por favor completa todos los campos del docente.', type: 'error' });
+      return;
+    }
+
+    const emailTecnico = `${userClean}@colegio.internal`;
+
+    const { data: docData, error: docErr } = await supabase.from('docentes').insert([{
+      documento: nuevoDocente.documento.trim(),
+      nombres: nuevoDocente.nombres.trim(),
+      apellidos: nuevoDocente.apellidos.trim(),
+      email: emailTecnico
+    }]).select().single();
+
+    if (docErr) {
+      setMessage({ text: 'Error al registrar docente: ' + docErr.message, type: 'error' });
+      return;
+    }
+
+    const { data: authData, error: authErr } = await supabase.auth.signUp({
+      email: emailTecnico,
+      password: nuevoDocente.password
+    });
+
+    if (authErr) {
+      setMessage({ text: 'Error al crear credenciales de acceso: ' + authErr.message, type: 'error' });
+    } else if (authData.user) {
+      await supabase.from('perfiles').insert([{
+        id: authData.user.id,
+        email: emailTecnico,
+        usuario: userClean,
+        rol: 'docente',
+        docente_id: docData.id
+      }]);
+
+      setMessage({ text: `¡Docente '${userClean}' registrado y acceso creado!`, type: 'success' });
+      setNuevoDocente({ documento: '', nombres: '', apellidos: '', usuario: '', password: '' });
+      cargarDatosBasicos(session.user, perfil);
+    }
+  };
+
+  const guardarEdicionDocente = async (e) => {
+    e.preventDefault();
+    if (!editandoDocente) return;
+
+    const { error } = await supabase.from('docentes').update({
+      documento: editandoDocente.documento,
+      nombres: editandoDocente.nombres,
+      apellidos: editandoDocente.apellidos
+    }).eq('id', editandoDocente.id);
+
+    if (!error) {
+      setMessage({ text: '¡Información del docente actualizada!', type: 'success' });
+      setEditandoDocente(null);
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al actualizar docente: ' + error.message, type: 'error' });
+    }
+  };
+
+  const eliminarDocente = async (id, nombre) => {
+    if (!confirm(`¿Estás seguro de eliminar al docente ${nombre}?`)) return;
+    const { error } = await supabase.from('docentes').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Docente eliminado correctamente.', type: 'success' });
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al eliminar docente: ' + error.message, type: 'error' });
+    }
+  };
+
+  const crearAsignatura = async (e) => {
+    if (e) e.preventDefault();
+    if (!nuevaAsignatura.trim()) return;
+
+    const { data, error } = await supabase.from('asignaturas').insert([{ nombre: nuevaAsignatura.trim() }]).select().single();
+    if (!error) {
+      setMessage({ text: '¡Asignatura creada con éxito!', type: 'success' });
+      setNuevaAsignatura('');
+      cargarDatosBasicos(session.user, perfil);
+      if (data?.id) setNuevaCarga(prev => ({ ...prev, asignatura_id: data.id }));
+    }
+  };
+
+  const guardarEdicionAsignatura = async (e) => {
+    e.preventDefault();
+    if (!editandoAsignatura) return;
+
+    const { error } = await supabase.from('asignaturas').update({
+      nombre: editandoAsignatura.nombre
+    }).eq('id', editandoAsignatura.id);
+
+    if (!error) {
+      setMessage({ text: '¡Asignatura actualizada!', type: 'success' });
+      setEditandoAsignatura(null);
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al actualizar asignatura: ' + error.message, type: 'error' });
+    }
+  };
+
+  const eliminarAsignatura = async (id, nombre) => {
+    if (!confirm(`¿Eliminar la asignatura '${nombre}'?`)) return;
+    const { error } = await supabase.from('asignaturas').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Asignatura eliminada.', type: 'success' });
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al eliminar asignatura: ' + error.message, type: 'error' });
+    }
+  };
+
+  const asignarCarga = async (e) => {
+    e.preventDefault();
+    if (!nuevaCarga.docente_id || !nuevaCarga.curso_id || !nuevaCarga.asignatura_id) return;
+
+    const { error } = await supabase.from('carga_academica').insert([nuevaCarga]);
+    if (!error) {
+      setMessage({ text: '¡Carga asignada con éxito!', type: 'success' });
+      setNuevaCarga({ docente_id: '', curso_id: '', asignatura_id: '' });
+      cargarDatosBasicos(session.user, perfil);
+    }
+  };
+
+  const eliminarCarga = async (id) => {
+    if (!confirm('¿Deseas quitar esta asignación de carga académica?')) return;
+    const { error } = await supabase.from('carga_academica').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Carga académica eliminada.', type: 'success' });
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al quitar carga: ' + error.message, type: 'error' });
     }
   };
 
@@ -364,87 +555,13 @@ export default function Home() {
         }
 
         setMessage({ text: '¡Carga masiva desde Excel completada con éxito!', type: 'success' });
-        cargarDatosBasicos();
+        cargarDatosBasicos(session.user, perfil);
         if (selectedCurso) cargarEstudiantesYAsistencia(selectedCurso, selectedAsignatura, fecha);
       } catch (err) {
         setMessage({ text: 'Error al procesar el archivo Excel: ' + err.message, type: 'error' });
       }
     };
     reader.readAsBinaryString(file);
-  };
-
-  const registrarDocente = async (e) => {
-    e.preventDefault();
-    const userClean = nuevoDocente.usuario.trim().toLowerCase();
-    
-    if (!nuevoDocente.documento || !nuevoDocente.nombres || !nuevoDocente.apellidos || !userClean || !nuevoDocente.password) {
-      setMessage({ text: 'Por favor completa todos los campos del docente.', type: 'error' });
-      return;
-    }
-
-    const emailTecnico = `${userClean}@colegio.internal`;
-
-    // 1. Guardar en tabla docentes
-    const { data: docData, error: docErr } = await supabase.from('docentes').insert([{
-      documento: nuevoDocente.documento.trim(),
-      nombres: nuevoDocente.nombres.trim(),
-      apellidos: nuevoDocente.apellidos.trim(),
-      email: emailTecnico
-    }]).select().single();
-
-    if (docErr) {
-      setMessage({ text: 'Error al registrar docente: ' + docErr.message, type: 'error' });
-      return;
-    }
-
-    // 2. Crear credenciales en Supabase Auth
-    const { data: authData, error: authErr } = await supabase.auth.signUp({
-      email: emailTecnico,
-      password: nuevoDocente.password
-    });
-
-    if (authErr) {
-      setMessage({ text: 'Error al crear credenciales de acceso: ' + authErr.message, type: 'error' });
-    } else if (authData.user) {
-      // 3. Vincular perfil con rol 'docente' y su usuario
-      await supabase.from('perfiles').insert([{
-        id: authData.user.id,
-        email: emailTecnico,
-        usuario: userClean,
-        rol: 'docente',
-        docente_id: docData.id
-      }]);
-
-      setMessage({ text: `¡Docente '${userClean}' registrado y acceso creado!`, type: 'success' });
-      setNuevoDocente({ documento: '', nombres: '', apellidos: '', usuario: '', password: '' });
-      cargarDatosBasicos(session.user, perfil);
-    }
-  };
-
-  const crearAsignatura = async (e) => {
-    if (e) e.preventDefault();
-    if (!nuevaAsignatura.trim()) return;
-
-    const { data, error } = await supabase.from('asignaturas').insert([{ nombre: nuevaAsignatura.trim() }]).select().single();
-    if (!error) {
-      setMessage({ text: '¡Asignatura creada con éxito!', type: 'success' });
-      setNuevaAsignatura('');
-      const { data: aData } = await supabase.from('asignaturas').select('*').order('nombre');
-      if (aData) setAsignaturas(aData);
-      if (data?.id) setNuevaCarga(prev => ({ ...prev, asignatura_id: data.id }));
-    }
-  };
-
-  const asignarCarga = async (e) => {
-    e.preventDefault();
-    if (!nuevaCarga.docente_id || !nuevaCarga.curso_id || !nuevaCarga.asignatura_id) return;
-
-    const { error } = await supabase.from('carga_academica').insert([nuevaCarga]);
-    if (!error) {
-      setMessage({ text: '¡Carga asignada con éxito!', type: 'success' });
-      setNuevaCarga({ docente_id: '', curso_id: '', asignatura_id: '' });
-      cargarDatosBasicos(session.user, perfil);
-    }
   };
 
   // --- PANTALLA DE LOGIN CON USUARIO Y CONTRASEÑA ---
@@ -871,6 +988,7 @@ export default function Home() {
               </button>
             </div>
 
+            {/* TAB: ESTUDIANTES Y CURSOS */}
             {adminTab === 'estudiantes' && (
               <div className="space-y-6">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
@@ -903,9 +1021,10 @@ export default function Home() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Crear Curso / Lista de Cursos */}
                   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                     <h2 className="text-md font-bold text-slate-800 flex items-center gap-2">
-                      <PlusCircle className="w-5 h-5 text-blue-600" /> Crear Nuevo Curso
+                      <PlusCircle className="w-5 h-5 text-blue-600" /> Crear / Gestionar Cursos
                     </h2>
                     <form onSubmit={crearCurso} className="space-y-3">
                       <input
@@ -915,12 +1034,32 @@ export default function Home() {
                         onChange={(e) => setNuevoCurso(e.target.value)}
                         className="w-full p-2.5 bg-slate-50 border rounded-lg text-sm"
                       />
-                      <button type="submit" className="w-full py-2.5 bg-blue-600 text-white font-semibold text-sm rounded-lg">
+                      <button type="submit" className="w-full py-2 bg-blue-600 text-white font-semibold text-xs rounded-lg">
                         Guardar Curso
                       </button>
                     </form>
+
+                    <div className="pt-2 border-t">
+                      <p className="text-xs font-semibold text-slate-500 mb-2">Cursos Existentes ({cursos.length}):</p>
+                      <div className="flex flex-wrap gap-2">
+                        {cursos.map(c => (
+                          <div key={c.id} className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 rounded-lg text-xs font-medium text-slate-700">
+                            <span>{c.nombre}</span>
+                            <button
+                              type="button"
+                              onClick={() => eliminarCurso(c.id, c.nombre)}
+                              className="text-red-500 hover:text-red-700 ml-1"
+                              title="Eliminar curso"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
+                  {/* Registrar Estudiante Manualmente */}
                   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                     <h2 className="text-md font-bold text-slate-800 flex items-center gap-2">
                       <UserPlus className="w-5 h-5 text-blue-600" /> Registrar Estudiante Manualmente
@@ -965,9 +1104,93 @@ export default function Home() {
                     </form>
                   </div>
                 </div>
+
+                {/* Formulario de Edición de Estudiante Modal/Inline */}
+                {editandoEstudiante && (
+                  <div className="bg-amber-50 border border-amber-300 p-4 rounded-xl space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-bold text-amber-900 text-xs uppercase flex items-center gap-1">
+                        <Edit3 className="w-4 h-4" /> Editando Estudiante: {editandoEstudiante.nombres} {editandoEstudiante.apellidos}
+                      </h3>
+                      <button onClick={() => setEditandoEstudiante(null)} className="text-slate-500 hover:text-slate-700">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <form onSubmit={guardarEdicionEstudiante} className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Documento"
+                        value={editandoEstudiante.documento}
+                        onChange={(e) => setEditandoEstudiante({ ...editandoEstudiante, documento: e.target.value })}
+                        className="p-2 bg-white border rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Nombres"
+                        value={editandoEstudiante.nombres}
+                        onChange={(e) => setEditandoEstudiante({ ...editandoEstudiante, nombres: e.target.value })}
+                        className="p-2 bg-white border rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Apellidos"
+                        value={editandoEstudiante.apellidos}
+                        onChange={(e) => setEditandoEstudiante({ ...editandoEstudiante, apellidos: e.target.value })}
+                        className="p-2 bg-white border rounded-lg text-xs"
+                      />
+                      <button type="submit" className="py-2 bg-amber-600 text-white font-bold text-xs rounded-lg">
+                        Guardar Cambios
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                {/* Lista de Estudiantes Registrados con Acciones */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
+                    <h3 className="font-semibold text-slate-700">
+                      Estudiantes en el curso seleccionado ({estudiantes.length})
+                    </h3>
+                    <select
+                      value={selectedCurso}
+                      onChange={(e) => setSelectedCurso(e.target.value)}
+                      className="p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-medium"
+                    >
+                      {cursos.map(c => <option key={c.id} value={c.id}>Curso: {c.nombre}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="divide-y max-h-80 overflow-y-auto">
+                    {estudiantes.map(est => (
+                      <div key={est.id} className="p-3 text-xs flex justify-between items-center hover:bg-slate-50">
+                        <div>
+                          <p className="font-semibold text-slate-800 capitalize">{est.apellidos} {est.nombres}</p>
+                          <p className="text-slate-400">Doc: {est.documento}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditandoEstudiante(est)}
+                            className="p-1.5 bg-amber-100 text-amber-800 rounded hover:bg-amber-200 transition"
+                            title="Editar estudiante"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => eliminarEstudiante(est.id, `${est.nombres} ${est.apellidos}`)}
+                            className="p-1.5 bg-red-100 text-red-800 rounded hover:bg-red-200 transition"
+                            title="Eliminar estudiante"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
+            {/* TAB: DOCENTES */}
             {adminTab === 'docentes' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
@@ -1018,13 +1241,68 @@ export default function Home() {
                   </form>
                 </div>
 
+                {/* Lista de Docentes con Edición y Eliminación */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
                   <h2 className="text-md font-bold text-slate-800">Docentes Registrados ({docentes.length})</h2>
+                  
+                  {editandoDocente && (
+                    <form onSubmit={guardarEdicionDocente} className="p-3 bg-amber-50 border border-amber-300 rounded-lg space-y-2">
+                      <div className="flex justify-between items-center">
+                        <p className="text-xs font-bold text-amber-900">Editando Docente</p>
+                        <button type="button" onClick={() => setEditandoDocente(null)}><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Documento"
+                        value={editandoDocente.documento}
+                        onChange={(e) => setEditandoDocente({ ...editandoDocente, documento: e.target.value })}
+                        className="w-full p-1.5 bg-white border rounded text-xs"
+                      />
+                      <div className="grid grid-cols-2 gap-1">
+                        <input
+                          type="text"
+                          placeholder="Nombres"
+                          value={editandoDocente.nombres}
+                          onChange={(e) => setEditandoDocente({ ...editandoDocente, nombres: e.target.value })}
+                          className="p-1.5 bg-white border rounded text-xs"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Apellidos"
+                          value={editandoDocente.apellidos}
+                          onChange={(e) => setEditandoDocente({ ...editandoDocente, apellidos: e.target.value })}
+                          className="p-1.5 bg-white border rounded text-xs"
+                        />
+                      </div>
+                      <button type="submit" className="w-full py-1.5 bg-amber-600 text-white text-xs font-bold rounded">
+                        Guardar Cambios
+                      </button>
+                    </form>
+                  )}
+
                   <div className="divide-y max-h-60 overflow-y-auto">
                     {docentes.map(d => (
-                      <div key={d.id} className="py-2 text-xs">
-                        <p className="font-semibold text-slate-800">{d.apellidos} {d.nombres}</p>
-                        <p className="text-slate-400">Doc: {d.documento}</p>
+                      <div key={d.id} className="py-2 text-xs flex justify-between items-center hover:bg-slate-50">
+                        <div>
+                          <p className="font-semibold text-slate-800">{d.apellidos} {d.nombres}</p>
+                          <p className="text-slate-400">Doc: {d.documento}</p>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => setEditandoDocente(d)}
+                            className="p-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
+                            title="Editar docente"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => eliminarDocente(d.id, `${d.nombres} ${d.apellidos}`)}
+                            className="p-1 bg-red-100 text-red-800 rounded hover:bg-red-200"
+                            title="Eliminar docente"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1032,6 +1310,7 @@ export default function Home() {
               </div>
             )}
 
+            {/* TAB: CARGA ACADÉMICA Y ASIGNATURAS */}
             {adminTab === 'carga' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
@@ -1082,36 +1361,77 @@ export default function Home() {
                     </button>
                   </form>
 
-                  <div className="pt-4 border-t">
-                    <p className="text-xs font-semibold text-slate-600 mb-2">¿No está la asignatura en la lista?</p>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Ej: Matemáticas"
-                        value={nuevaAsignatura}
-                        onChange={(e) => setNuevaAsignatura(e.target.value)}
-                        className="p-2 bg-slate-50 border rounded-lg text-xs flex-1"
-                      />
-                      <button
-                        type="button"
-                        onClick={crearAsignatura}
-                        className="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition"
-                      >
-                        Crear
-                      </button>
+                  {/* Crear / Editar / Eliminar Asignaturas */}
+                  <div className="pt-4 border-t space-y-3">
+                    <p className="text-xs font-semibold text-slate-600">Gestión de Asignaturas:</p>
+
+                    {editandoAsignatura ? (
+                      <form onSubmit={guardarEdicionAsignatura} className="flex gap-2">
+                        <input
+                          type="text"
+                          value={editandoAsignatura.nombre}
+                          onChange={(e) => setEditandoAsignatura({ ...editandoAsignatura, nombre: e.target.value })}
+                          className="p-2 bg-white border border-amber-300 rounded-lg text-xs flex-1"
+                        />
+                        <button type="submit" className="px-3 py-2 bg-amber-600 text-white text-xs font-semibold rounded-lg">
+                          Guardar
+                        </button>
+                        <button type="button" onClick={() => setEditandoAsignatura(null)} className="px-2 py-2 text-slate-500">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Ej: Matemáticas"
+                          value={nuevaAsignatura}
+                          onChange={(e) => setNuevaAsignatura(e.target.value)}
+                          className="p-2 bg-slate-50 border rounded-lg text-xs flex-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={crearAsignatura}
+                          className="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition"
+                        >
+                          Crear
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {asignaturas.map(a => (
+                        <div key={a.id} className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded text-xs text-slate-700">
+                          <span>{a.nombre}</span>
+                          <button onClick={() => setEditandoAsignatura(a)} className="text-amber-600 hover:text-amber-800 ml-1">
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button onClick={() => eliminarAsignatura(a.id, a.nombre)} className="text-red-600 hover:text-red-800">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
 
+                {/* Lista de Cargas Asignadas con opción de Eliminar */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
                   <h2 className="text-md font-bold text-slate-800">Cargas Académicas Asignadas ({cargas.length})</h2>
                   <div className="divide-y max-h-80 overflow-y-auto">
                     {cargas.map(cg => (
-                      <div key={cg.id} className="py-2 text-xs flex justify-between items-center">
+                      <div key={cg.id} className="py-2 text-xs flex justify-between items-center hover:bg-slate-50">
                         <div>
                           <p className="font-semibold text-slate-800">{cg.docentes?.apellidos} {cg.docentes?.nombres}</p>
                           <p className="text-blue-600 font-medium">Curso: {cg.cursos?.nombre} | Materia: {cg.asignaturas?.nombre}</p>
                         </div>
+                        <button
+                          onClick={() => eliminarCarga(cg.id)}
+                          className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                          title="Quitar esta carga"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
