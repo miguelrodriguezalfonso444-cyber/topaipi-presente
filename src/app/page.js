@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
 import { 
-  BookOpen, 
   UserCheck, 
   ShieldCheck, 
   Upload, 
@@ -43,6 +42,7 @@ export default function Home() {
   // Datos generales
   const [cursos, setCursos] = useState([]);
   const [docentes, setDocentes] = useState([]);
+  const [todosPerfiles, setTodosPerfiles] = useState([]);
   const [asignaturas, setAsignaturas] = useState([]);
   const [cargas, setCargas] = useState([]);
   const [docenteCarga, setDocenteCarga] = useState([]);
@@ -68,14 +68,14 @@ export default function Home() {
   // Formulario Administrador (Creación)
   const [nuevoCurso, setNuevoCurso] = useState('');
   const [nuevoEstudiante, setNuevoEstudiante] = useState({ documento: '', nombres: '', apellidos: '', curso_id: '' });
-  const [nuevoDocente, setNuevoDocente] = useState({ documento: '', nombres: '', apellidos: '', usuario: '', password: '' });
+  const [nuevoUsuario, setNuevoUsuario] = useState({ documento: '', nombres: '', apellidos: '', usuario: '', password: '', rol: 'docente' });
   const [nuevaAsignatura, setNuevaAsignatura] = useState('');
   const [nuevaCarga, setNuevaCarga] = useState({ docente_id: '', curso_id: '', asignatura_id: '' });
 
   // Estados para Edición
-  const [editandoEstudiante, setEditandoEstudiante] = useState(null); // { id, documento, nombres, apellidos, curso_id }
-  const [editandoDocente, setEditandoDocente] = useState(null);       // { id, documento, nombres, apellidos }
-  const [editandoAsignatura, setEditandoAsignatura] = useState(null); // { id, nombre }
+  const [editandoEstudiante, setEditandoEstudiante] = useState(null);
+  const [editandoDocente, setEditandoDocente] = useState(null);
+  const [editandoAsignatura, setEditandoAsignatura] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -115,6 +115,9 @@ export default function Home() {
 
     const { data: dData } = await supabase.from('docentes').select('*').order('apellidos');
     if (dData) setDocentes(dData);
+
+    const { data: pData } = await supabase.from('perfiles').select('*, docentes(nombres, apellidos, documento)');
+    if (pData) setTodosPerfiles(pData);
 
     const { data: aData } = await supabase.from('asignaturas').select('*').order('nombre');
     if (aData) {
@@ -284,7 +287,7 @@ export default function Home() {
     const ws = XLSX.utils.json_to_sheet(filas);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Historial_Asistencia');
-    XLSX.writeFile(wb, `Reporte_Asistencia_${reporteFechaInicio}_al_${reporteFechaFin}.xlsx`);
+    XLSX.writeFile(wb, `Reporte_IED_Topaipi_${reporteFechaInicio}_al_${reporteFechaFin}.xlsx`);
   };
 
   // --- MÓDULOS DE ADMINISTRACIÓN (CREAR / EDITAR / ELIMINAR) ---
@@ -360,49 +363,85 @@ export default function Home() {
     }
   };
 
-  const registrarDocente = async (e) => {
+  // REGISTRO DE USUARIOS (DOCENTE O ADMINISTRADOR)
+  const registrarUsuarioAcceso = async (e) => {
     e.preventDefault();
-    const userClean = nuevoDocente.usuario.trim().toLowerCase();
+    const userClean = nuevoUsuario.usuario.trim().toLowerCase();
     
-    if (!nuevoDocente.documento || !nuevoDocente.nombres || !nuevoDocente.apellidos || !userClean || !nuevoDocente.password) {
-      setMessage({ text: 'Por favor completa todos los campos del docente.', type: 'error' });
+    if (!userClean || !nuevoUsuario.password) {
+      setMessage({ text: 'Por favor asigna un Nombre de Usuario y Contraseña.', type: 'error' });
       return;
     }
 
     const emailTecnico = `${userClean}@colegio.internal`;
 
-    const { data: docData, error: docErr } = await supabase.from('docentes').insert([{
-      documento: nuevoDocente.documento.trim(),
-      nombres: nuevoDocente.nombres.trim(),
-      apellidos: nuevoDocente.apellidos.trim(),
-      email: emailTecnico
-    }]).select().single();
+    if (nuevoUsuario.rol === 'docente') {
+      if (!nuevoUsuario.documento || !nuevoUsuario.nombres || !nuevoUsuario.apellidos) {
+        setMessage({ text: 'Por favor completa todos los campos del docente.', type: 'error' });
+        return;
+      }
 
-    if (docErr) {
-      setMessage({ text: 'Error al registrar docente: ' + docErr.message, type: 'error' });
-      return;
-    }
+      // 1. Guardar en tabla docentes
+      const { data: docData, error: docErr } = await supabase.from('docentes').insert([{
+        documento: nuevoUsuario.documento.trim(),
+        nombres: nuevoUsuario.nombres.trim(),
+        apellidos: nuevoUsuario.apellidos.trim(),
+        email: emailTecnico
+      }]).select().single();
 
-    const { data: authData, error: authErr } = await supabase.auth.signUp({
-      email: emailTecnico,
-      password: nuevoDocente.password
-    });
+      if (docErr) {
+        setMessage({ text: 'Error al registrar docente: ' + docErr.message, type: 'error' });
+        return;
+      }
 
-    if (authErr) {
-      setMessage({ text: 'Error al crear credenciales de acceso: ' + authErr.message, type: 'error' });
-    } else if (authData.user) {
-      await supabase.from('perfiles').insert([{
-        id: authData.user.id,
+      // 2. Crear cuenta Auth
+      const { data: authData, error: authErr } = await supabase.auth.signUp({
         email: emailTecnico,
-        usuario: userClean,
-        rol: 'docente',
-        docente_id: docData.id
-      }]);
+        password: nuevoUsuario.password
+      });
 
-      setMessage({ text: `¡Docente '${userClean}' registrado y acceso creado!`, type: 'success' });
-      setNuevoDocente({ documento: '', nombres: '', apellidos: '', usuario: '', password: '' });
-      cargarDatosBasicos(session.user, perfil);
+      if (authErr) {
+        setMessage({ text: 'Error al crear credenciales de acceso: ' + authErr.message, type: 'error' });
+        return;
+      }
+
+      if (authData.user) {
+        await supabase.from('perfiles').insert([{
+          id: authData.user.id,
+          email: emailTecnico,
+          usuario: userClean,
+          rol: 'docente',
+          docente_id: docData.id
+        }]);
+
+        setMessage({ text: `¡Docente '${userClean}' registrado con éxito!`, type: 'success' });
+      }
+    } else {
+      // REGISTRO DE ADMINISTRADOR
+      const { data: authData, error: authErr } = await supabase.auth.signUp({
+        email: emailTecnico,
+        password: nuevoUsuario.password
+      });
+
+      if (authErr) {
+        setMessage({ text: 'Error al crear credenciales de administrador: ' + authErr.message, type: 'error' });
+        return;
+      }
+
+      if (authData.user) {
+        await supabase.from('perfiles').insert([{
+          id: authData.user.id,
+          email: emailTecnico,
+          usuario: userClean,
+          rol: 'admin'
+        }]);
+
+        setMessage({ text: `¡Administrador '${userClean}' registrado con acceso total!`, type: 'success' });
+      }
     }
+
+    setNuevoUsuario({ documento: '', nombres: '', apellidos: '', usuario: '', password: '', rol: 'docente' });
+    cargarDatosBasicos(session.user, perfil);
   };
 
   const guardarEdicionDocente = async (e) => {
@@ -432,6 +471,17 @@ export default function Home() {
       cargarDatosBasicos(session.user, perfil);
     } else {
       setMessage({ text: 'Error al eliminar docente: ' + error.message, type: 'error' });
+    }
+  };
+
+  const eliminarPerfilUsuario = async (id, usuario) => {
+    if (!confirm(`¿Deseas eliminar el usuario de acceso '${usuario}'?`)) return;
+    const { error } = await supabase.from('perfiles').delete().eq('id', id);
+    if (!error) {
+      setMessage({ text: 'Usuario eliminado.', type: 'success' });
+      cargarDatosBasicos(session.user, perfil);
+    } else {
+      setMessage({ text: 'Error al eliminar el usuario: ' + error.message, type: 'error' });
     }
   };
 
@@ -507,7 +557,7 @@ export default function Home() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Estudiantes');
-    XLSX.writeFile(wb, 'Plantilla_Estudiantes.xlsx');
+    XLSX.writeFile(wb, 'Plantilla_Estudiantes_Topaipi.xlsx');
   };
 
   const handleFileUpload = async (e) => {
@@ -564,17 +614,21 @@ export default function Home() {
     reader.readAsBinaryString(file);
   };
 
-  // --- PANTALLA DE LOGIN CON USUARIO Y CONTRASEÑA ---
+  // --- PANTALLA DE LOGIN CON MARCA INSTITUCIONAL ---
   if (!session) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-emerald-900/10 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 space-y-6 border border-slate-200">
-          <div className="text-center space-y-2">
-            <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center mx-auto text-white shadow-md">
-              <BookOpen className="w-6 h-6" />
+          <div className="text-center space-y-3">
+            <div className="w-20 h-20 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto shadow-sm border border-emerald-100 p-2">
+              <img src="/escudo.png" alt="Escudo IED Topaipí" className="w-full h-full object-contain" />
             </div>
-            <h1 className="text-2xl font-bold text-slate-800">Asistencia Escolar</h1>
-            <p className="text-xs text-slate-500">Ingresa con tu Usuario y Contraseña</p>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800">Topaipí Presente</h1>
+              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mt-0.5">
+                Institución Educativa Departamental de Topaipí
+              </p>
+            </div>
           </div>
 
           {message.text && (
@@ -595,7 +649,7 @@ export default function Home() {
                 placeholder="Ej: mrodriguez o admin"
                 value={usuarioAuth}
                 onChange={(e) => setUsuarioAuth(e.target.value)}
-                className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-emerald-500"
               />
             </div>
 
@@ -609,16 +663,16 @@ export default function Home() {
                 placeholder="••••••••"
                 value={passwordAuth}
                 onChange={(e) => setPasswordAuth(e.target.value)}
-                className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-emerald-500"
               />
             </div>
 
             <button
               type="submit"
               disabled={loadingAuth}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-lg shadow-md transition"
+              className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm rounded-lg shadow-md transition"
             >
-              {loadingAuth ? 'Verificando...' : 'Ingresar al Sistema'}
+              {loadingAuth ? 'Ingresando...' : 'Ingresar al Sistema'}
             </button>
           </form>
         </div>
@@ -639,25 +693,27 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
-      {/* Encabezado */}
-      <header className="bg-blue-600 text-white shadow-md">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+      {/* Encabezado Institucional */}
+      <header className="bg-emerald-800 text-white shadow-md">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <BookOpen className="w-8 h-8" />
+            <div className="w-12 h-12 bg-white rounded-lg p-1 shadow-sm flex items-center justify-center shrink-0">
+              <img src="/escudo.png" alt="Escudo IED Topaipí" className="w-full h-full object-contain" />
+            </div>
             <div>
-              <h1 className="text-xl font-bold">Control de Asistencia Escolar</h1>
-              <p className="text-blue-100 text-xs capitalize">
-                Rol: {perfil?.rol || 'Usuario'} | Usuario: {perfil?.usuario || session.user.email.split('@')[0]}
+              <h1 className="text-lg font-bold leading-tight">Topaipí Presente</h1>
+              <p className="text-emerald-100 text-xs font-medium">
+                IED Topaipí • Rol: <span className="capitalize">{perfil?.rol || 'Usuario'}</span> ({perfil?.usuario || session.user.email.split('@')[0]})
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex bg-blue-700/60 p-1 rounded-lg gap-1">
+            <div className="flex bg-emerald-900/60 p-1 rounded-lg gap-1">
               <button
                 onClick={() => setView('docente')}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-md font-medium text-xs md:text-sm transition ${
-                  view === 'docente' ? 'bg-white text-blue-700 shadow-sm' : 'text-blue-100 hover:text-white'
+                  view === 'docente' ? 'bg-white text-emerald-800 shadow-sm' : 'text-emerald-100 hover:text-white'
                 }`}
               >
                 <UserCheck className="w-4 h-4" /> Vista Docente
@@ -668,7 +724,7 @@ export default function Home() {
                   <button
                     onClick={() => setView('reportes')}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md font-medium text-xs md:text-sm transition ${
-                      view === 'reportes' ? 'bg-white text-blue-700 shadow-sm' : 'text-blue-100 hover:text-white'
+                      view === 'reportes' ? 'bg-white text-emerald-800 shadow-sm' : 'text-emerald-100 hover:text-white'
                     }`}
                   >
                     <FileSpreadsheet className="w-4 h-4" /> Historial y Reportes
@@ -676,7 +732,7 @@ export default function Home() {
                   <button
                     onClick={() => setView('admin')}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md font-medium text-xs md:text-sm transition ${
-                      view === 'admin' ? 'bg-white text-blue-700 shadow-sm' : 'text-blue-100 hover:text-white'
+                      view === 'admin' ? 'bg-white text-emerald-800 shadow-sm' : 'text-emerald-100 hover:text-white'
                     }`}
                   >
                     <ShieldCheck className="w-4 h-4" /> Administrador
@@ -688,7 +744,7 @@ export default function Home() {
             <button
               onClick={handleLogout}
               title="Cerrar Sesión"
-              className="p-2 bg-blue-700 hover:bg-blue-800 rounded-lg text-white transition"
+              className="p-2 bg-emerald-900 hover:bg-emerald-950 rounded-lg text-white transition"
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -718,7 +774,7 @@ export default function Home() {
                 <select
                   value={selectedCurso}
                   onChange={(e) => setSelectedCurso(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-blue-500 mt-1"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-emerald-500 mt-1"
                 >
                   {cursosDisponibles.length === 0 && <option value="">Sin carga asignada</option>}
                   {cursosDisponibles.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -730,7 +786,7 @@ export default function Home() {
                 <select
                   value={selectedAsignatura}
                   onChange={(e) => setSelectedAsignatura(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-blue-500 mt-1"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-emerald-500 mt-1"
                 >
                   {asignaturasDisponibles.length === 0 && <option value="">Sin asignaturas</option>}
                   {asignaturasDisponibles.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
@@ -745,7 +801,7 @@ export default function Home() {
                   type="date"
                   value={fecha}
                   onChange={(e) => setFecha(e.target.value)}
-                  className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-blue-500 mt-1"
+                  className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-emerald-500 mt-1"
                 />
               </div>
             </div>
@@ -753,7 +809,7 @@ export default function Home() {
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
                 <h2 className="font-semibold text-slate-700">Estudiantes ({estudiantes.length})</h2>
-                <span className="text-xs text-slate-500">Marcación de asistencia</span>
+                <span className="text-xs text-slate-500">Marcación de asistencia diaria</span>
               </div>
 
               {loading ? (
@@ -829,7 +885,7 @@ export default function Home() {
                   <button
                     onClick={guardarAsistencia}
                     disabled={saving}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm transition"
+                    className="flex items-center gap-2 px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold rounded-lg shadow-sm transition"
                   >
                     <Save className="w-4 h-4" /> {saving ? 'Guardando...' : 'Guardar Asistencia'}
                   </button>
@@ -844,7 +900,7 @@ export default function Home() {
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
               <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-blue-600" /> Consulta de Historial y Exportación
+                <FileSpreadsheet className="w-5 h-5 text-emerald-700" /> Historial de Asistencia - IED Topaipí
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -895,16 +951,16 @@ export default function Home() {
               <div className="flex gap-2 justify-end pt-2">
                 <button
                   onClick={buscarReporte}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg"
+                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg transition"
                 >
                   Consultar Historial
                 </button>
                 {datosReporte.length > 0 && (
                   <button
                     onClick={exportarReporteExcel}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"
+                    className="flex items-center gap-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white text-xs font-semibold rounded-lg transition"
                   >
-                    <Download className="w-4 h-4" /> Exportar a Excel
+                    <Download className="w-4 h-4" /> Exportar Excel (.XLSX)
                   </button>
                 )}
               </div>
@@ -936,7 +992,7 @@ export default function Home() {
                       {datosReporte.map((r, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="p-3 font-medium">{r.fecha}</td>
-                          <td className="p-3 font-medium text-blue-600">{r.asignaturas?.nombre || 'General'}</td>
+                          <td className="p-3 font-medium text-emerald-700">{r.asignaturas?.nombre || 'General'}</td>
                           <td className="p-3">{r.estudiantes?.documento}</td>
                           <td className="p-3 font-semibold text-slate-800">{r.estudiantes?.apellidos} {r.estudiantes?.nombres}</td>
                           <td className="p-3">
@@ -965,7 +1021,7 @@ export default function Home() {
               <button
                 onClick={() => setAdminTab('estudiantes')}
                 className={`flex items-center gap-2 pb-3 px-2 font-medium text-xs border-b-2 transition ${
-                  adminTab === 'estudiantes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'
+                  adminTab === 'estudiantes' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-slate-500'
                 }`}
               >
                 <Users className="w-4 h-4" /> Cursos y Estudiantes
@@ -973,15 +1029,15 @@ export default function Home() {
               <button
                 onClick={() => setAdminTab('docentes')}
                 className={`flex items-center gap-2 pb-3 px-2 font-medium text-xs border-b-2 transition ${
-                  adminTab === 'docentes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'
+                  adminTab === 'docentes' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-slate-500'
                 }`}
               >
-                <GraduationCap className="w-4 h-4" /> Perfiles de Docentes
+                <GraduationCap className="w-4 h-4" /> Usuarios y Accesos
               </button>
               <button
                 onClick={() => setAdminTab('carga')}
                 className={`flex items-center gap-2 pb-3 px-2 font-medium text-xs border-b-2 transition ${
-                  adminTab === 'carga' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'
+                  adminTab === 'carga' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-slate-500'
                 }`}
               >
                 <Briefcase className="w-4 h-4" /> Carga Académica
@@ -995,7 +1051,7 @@ export default function Home() {
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-4">
                     <div>
                       <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                        <Upload className="w-5 h-5 text-blue-600" /> Importar Estudiantes desde Excel
+                        <Upload className="w-5 h-5 text-emerald-700" /> Importar Estudiantes desde Excel
                       </h2>
                       <p className="text-xs text-slate-500">Descarga la plantilla estructurada, llénala y súbela aquí.</p>
                     </div>
@@ -1003,11 +1059,11 @@ export default function Home() {
                       onClick={descargarPlantilla}
                       className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition"
                     >
-                      <Download className="w-4 h-4" /> Descargar Plantilla Excel
+                      <Download className="w-4 h-4" /> Plantilla Excel
                     </button>
                   </div>
 
-                  <div className="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-8 text-center bg-slate-50 hover:bg-blue-50/30 transition cursor-pointer relative">
+                  <div className="border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl p-8 text-center bg-slate-50 hover:bg-emerald-50/30 transition cursor-pointer relative">
                     <input
                       type="file"
                       accept=".xlsx, .xls"
@@ -1024,7 +1080,7 @@ export default function Home() {
                   {/* Crear Curso / Lista de Cursos */}
                   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                     <h2 className="text-md font-bold text-slate-800 flex items-center gap-2">
-                      <PlusCircle className="w-5 h-5 text-blue-600" /> Crear / Gestionar Cursos
+                      <PlusCircle className="w-5 h-5 text-emerald-700" /> Crear / Gestionar Cursos
                     </h2>
                     <form onSubmit={crearCurso} className="space-y-3">
                       <input
@@ -1034,7 +1090,7 @@ export default function Home() {
                         onChange={(e) => setNuevoCurso(e.target.value)}
                         className="w-full p-2.5 bg-slate-50 border rounded-lg text-sm"
                       />
-                      <button type="submit" className="w-full py-2 bg-blue-600 text-white font-semibold text-xs rounded-lg">
+                      <button type="submit" className="w-full py-2 bg-emerald-700 text-white font-semibold text-xs rounded-lg">
                         Guardar Curso
                       </button>
                     </form>
@@ -1062,7 +1118,7 @@ export default function Home() {
                   {/* Registrar Estudiante Manualmente */}
                   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                     <h2 className="text-md font-bold text-slate-800 flex items-center gap-2">
-                      <UserPlus className="w-5 h-5 text-blue-600" /> Registrar Estudiante Manualmente
+                      <UserPlus className="w-5 h-5 text-emerald-700" /> Registrar Estudiante Manualmente
                     </h2>
                     <form onSubmit={registrarEstudianteManual} className="space-y-3">
                       <div className="grid grid-cols-2 gap-2">
@@ -1098,14 +1154,14 @@ export default function Home() {
                           className="p-2 bg-slate-50 border rounded-lg text-xs"
                         />
                       </div>
-                      <button type="submit" className="w-full py-2 bg-emerald-600 text-white font-semibold text-xs rounded-lg">
+                      <button type="submit" className="w-full py-2 bg-emerald-700 text-white font-semibold text-xs rounded-lg">
                         Registrar Estudiante
                       </button>
                     </form>
                   </div>
                 </div>
 
-                {/* Formulario de Edición de Estudiante Modal/Inline */}
+                {/* Formulario de Edición de Estudiante */}
                 {editandoEstudiante && (
                   <div className="bg-amber-50 border border-amber-300 p-4 rounded-xl space-y-3">
                     <div className="flex justify-between items-center">
@@ -1145,7 +1201,7 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* Lista de Estudiantes Registrados con Acciones */}
+                {/* Lista de Estudiantes Registrados */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
                     <h3 className="font-semibold text-slate-700">
@@ -1190,119 +1246,104 @@ export default function Home() {
               </div>
             )}
 
-            {/* TAB: DOCENTES */}
+            {/* TAB: USUARIOS Y ACCESOS (DOCENTES Y ADMINISTRADORES) */}
             {adminTab === 'docentes' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                   <h2 className="text-md font-bold text-slate-800 flex items-center gap-2">
-                    <UserPlus className="w-5 h-5 text-blue-600" /> Crear Perfil de Docente con Acceso
+                    <UserPlus className="w-5 h-5 text-emerald-700" /> Crear Cuenta de Acceso
                   </h2>
-                  <form onSubmit={registrarDocente} className="space-y-3">
-                    <input
-                      type="text"
-                      placeholder="Documento"
-                      value={nuevoDocente.documento}
-                      onChange={(e) => setNuevoDocente({ ...nuevoDocente, documento: e.target.value })}
-                      className="w-full p-2 bg-slate-50 border rounded-lg text-xs"
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        placeholder="Nombres"
-                        value={nuevoDocente.nombres}
-                        onChange={(e) => setNuevoDocente({ ...nuevoDocente, nombres: e.target.value })}
-                        className="p-2 bg-slate-50 border rounded-lg text-xs"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Apellidos"
-                        value={nuevoDocente.apellidos}
-                        onChange={(e) => setNuevoDocente({ ...nuevoDocente, apellidos: e.target.value })}
-                        className="p-2 bg-slate-50 border rounded-lg text-xs"
-                      />
+                  
+                  <form onSubmit={registrarUsuarioAcceso} className="space-y-3">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500">Rol de Usuario</label>
+                      <select
+                        value={nuevoUsuario.rol}
+                        onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, rol: e.target.value })}
+                        className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-xs mt-1 font-semibold text-emerald-800"
+                      >
+                        <option value="docente">Docente</option>
+                        <option value="admin">Administrador</option>
+                      </select>
                     </div>
+
+                    {nuevoUsuario.rol === 'docente' && (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="Documento Identidad"
+                          value={nuevoUsuario.documento}
+                          onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, documento: e.target.value })}
+                          className="w-full p-2 bg-slate-50 border rounded-lg text-xs"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            placeholder="Nombres"
+                            value={nuevoUsuario.nombres}
+                            onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, nombres: e.target.value })}
+                            className="p-2 bg-slate-50 border rounded-lg text-xs"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Apellidos"
+                            value={nuevoUsuario.apellidos}
+                            onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, apellidos: e.target.value })}
+                            className="p-2 bg-slate-50 border rounded-lg text-xs"
+                          />
+                        </div>
+                      </>
+                    )}
+
                     <input
                       type="text"
-                      placeholder="Nombre de Usuario (Ej: docente1)"
-                      value={nuevoDocente.usuario}
-                      onChange={(e) => setNuevoDocente({ ...nuevoDocente, usuario: e.target.value })}
+                      placeholder="Nombre de Usuario (Ej: admin2 o docente1)"
+                      value={nuevoUsuario.usuario}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, usuario: e.target.value })}
                       className="w-full p-2 bg-slate-50 border rounded-lg text-xs font-mono"
                     />
                     <input
                       type="password"
-                      placeholder="Asignar Contraseña al Docente"
-                      value={nuevoDocente.password}
-                      onChange={(e) => setNuevoDocente({ ...nuevoDocente, password: e.target.value })}
+                      placeholder="Asignar Contraseña"
+                      value={nuevoUsuario.password}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, password: e.target.value })}
                       className="w-full p-2 bg-slate-50 border rounded-lg text-xs"
                     />
-                    <button type="submit" className="w-full py-2 bg-blue-600 text-white font-semibold text-xs rounded-lg">
-                      Guardar Docente y Crear Acceso
+
+                    <button type="submit" className="w-full py-2 bg-emerald-700 text-white font-semibold text-xs rounded-lg shadow-sm">
+                      Crear Cuenta {nuevoUsuario.rol === 'admin' ? 'de Administrador' : 'de Docente'}
                     </button>
                   </form>
                 </div>
 
-                {/* Lista de Docentes con Edición y Eliminación */}
+                {/* Lista de Usuarios (Admins y Docentes) */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
-                  <h2 className="text-md font-bold text-slate-800">Docentes Registrados ({docentes.length})</h2>
-                  
-                  {editandoDocente && (
-                    <form onSubmit={guardarEdicionDocente} className="p-3 bg-amber-50 border border-amber-300 rounded-lg space-y-2">
-                      <div className="flex justify-between items-center">
-                        <p className="text-xs font-bold text-amber-900">Editando Docente</p>
-                        <button type="button" onClick={() => setEditandoDocente(null)}><X className="w-3.5 h-3.5" /></button>
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="Documento"
-                        value={editandoDocente.documento}
-                        onChange={(e) => setEditandoDocente({ ...editandoDocente, documento: e.target.value })}
-                        className="w-full p-1.5 bg-white border rounded text-xs"
-                      />
-                      <div className="grid grid-cols-2 gap-1">
-                        <input
-                          type="text"
-                          placeholder="Nombres"
-                          value={editandoDocente.nombres}
-                          onChange={(e) => setEditandoDocente({ ...editandoDocente, nombres: e.target.value })}
-                          className="p-1.5 bg-white border rounded text-xs"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Apellidos"
-                          value={editandoDocente.apellidos}
-                          onChange={(e) => setEditandoDocente({ ...editandoDocente, apellidos: e.target.value })}
-                          className="p-1.5 bg-white border rounded text-xs"
-                        />
-                      </div>
-                      <button type="submit" className="w-full py-1.5 bg-amber-600 text-white text-xs font-bold rounded">
-                        Guardar Cambios
-                      </button>
-                    </form>
-                  )}
+                  <h2 className="text-md font-bold text-slate-800">Cuentas Registradas ({todosPerfiles.length})</h2>
 
-                  <div className="divide-y max-h-60 overflow-y-auto">
-                    {docentes.map(d => (
-                      <div key={d.id} className="py-2 text-xs flex justify-between items-center hover:bg-slate-50">
+                  <div className="divide-y max-h-80 overflow-y-auto">
+                    {todosPerfiles.map(p => (
+                      <div key={p.id} className="py-2.5 text-xs flex justify-between items-center hover:bg-slate-50">
                         <div>
-                          <p className="font-semibold text-slate-800">{d.apellidos} {d.nombres}</p>
-                          <p className="text-slate-400">Doc: {d.documento}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-800">{p.usuario}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              p.rol === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {p.rol === 'admin' ? 'ADMINISTRADOR' : 'DOCENTE'}
+                            </span>
+                          </div>
+                          {p.docentes && (
+                            <p className="text-slate-500 mt-0.5">{p.docentes.apellidos} {p.docentes.nombres}</p>
+                          )}
                         </div>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => setEditandoDocente(d)}
-                            className="p-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
-                            title="Editar docente"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => eliminarDocente(d.id, `${d.nombres} ${d.apellidos}`)}
-                            className="p-1 bg-red-100 text-red-800 rounded hover:bg-red-200"
-                            title="Eliminar docente"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+
+                        <button
+                          onClick={() => eliminarPerfilUsuario(p.id, p.usuario)}
+                          className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                          title="Eliminar acceso"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -1315,7 +1356,7 @@ export default function Home() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                   <h2 className="text-md font-bold text-slate-800 flex items-center gap-2">
-                    <Briefcase className="w-5 h-5 text-blue-600" /> Asignar Carga Académica
+                    <Briefcase className="w-5 h-5 text-emerald-700" /> Asignar Carga Académica
                   </h2>
                   <form onSubmit={asignarCarga} className="space-y-3">
                     <div>
@@ -1356,7 +1397,7 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <button type="submit" className="w-full py-2 bg-blue-600 text-white font-semibold text-xs rounded-lg">
+                    <button type="submit" className="w-full py-2 bg-emerald-700 text-white font-semibold text-xs rounded-lg">
                       Asignar Carga
                     </button>
                   </form>
@@ -1415,7 +1456,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Lista de Cargas Asignadas con opción de Eliminar */}
+                {/* Lista de Cargas Asignadas */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-3">
                   <h2 className="text-md font-bold text-slate-800">Cargas Académicas Asignadas ({cargas.length})</h2>
                   <div className="divide-y max-h-80 overflow-y-auto">
@@ -1423,7 +1464,7 @@ export default function Home() {
                       <div key={cg.id} className="py-2 text-xs flex justify-between items-center hover:bg-slate-50">
                         <div>
                           <p className="font-semibold text-slate-800">{cg.docentes?.apellidos} {cg.docentes?.nombres}</p>
-                          <p className="text-blue-600 font-medium">Curso: {cg.cursos?.nombre} | Materia: {cg.asignaturas?.nombre}</p>
+                          <p className="text-emerald-700 font-medium">Curso: {cg.cursos?.nombre} | Materia: {cg.asignaturas?.nombre}</p>
                         </div>
                         <button
                           onClick={() => eliminarCarga(cg.id)}
